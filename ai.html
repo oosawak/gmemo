@@ -1,0 +1,410 @@
+<!doctype html>
+<html lang="ja">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>GMEMO AI</title></head>
+<body data-mode="ai">
+
+<p><b>GMEMO AI</b> · <a href="GMEMO.MD" download>GMEMO.MD</a> · <a href="index.html">人向け画面</a></p>
+<details><summary>AIに依頼する前の準備</summary><ol><li>先にこのAI用画面を開き、初回は「初期設定」でAI用クライアントIDを登録します。</li><li>「Googleに接続」で接続を済ませ、アカウントが表示されることを確認します。</li><li>このタブを開いたまま、AIにGMEMO.MDと対象ファイルのURLを渡してください。再読み込みは不要です。</li></ol></details>
+<p><span id="identity">未接続</span>
+<button id="login">Googleに接続</button><button id="reconnect" hidden>再接続</button><button id="logout" hidden>接続解除</button><button id="settings">初期設定</button></p>
+<p><label for="ai-key">KEY（ファイルURL / ID）</label><br>
+<input id="ai-key" size="65" autocomplete="off">
+<button id="ai-get" data-remote>取得</button><button id="ai-download" disabled>ファイルをダウンロード</button></p>
+<p><label for="ai-result">結果JSON</label><br>
+<textarea id="ai-result" rows="3" cols="90" readonly spellcheck="false"></textarea></p>
+<hr>
+<p><label for="ai-folder">新規保存先（フォルダURL / ID）</label><br>
+<input id="ai-folder" size="65" placeholder="空欄 = 初期フォルダー" autocomplete="off"><button id="ai-set-folder" data-remote>保存先を設定</button><br>
+保存先：<span id="destination">未指定</span></p>
+<p><button id="new-note">＋ 新規</button> <span id="editor-label">新しいメモ</span></p>
+<p><label for="title">メモのタイトル</label><br><input id="title" size="65" maxlength="180"></p>
+<p><label for="body">Markdown本文</label><br><textarea id="body" rows="8" cols="90" spellcheck="false"></textarea></p>
+<p><button id="choose-files">＋ ファイルを添付</button><input id="file-input" type="file" multiple hidden></p>
+<div id="queue" aria-live="polite"></div>
+<p><button id="save" disabled>Driveに保存</button> <button id="ai-replace" disabled>元ファイルを更新</button></p>
+<p id="status" role="status" aria-live="polite">KEYを指定して取得。新規保存時は保存先を指定。</p>
+  <dialog id="setup"><h2>Google Driveの初期設定</h2><p>初回だけ、あなたのGoogle Cloudプロジェクトで設定します。HTMLだけで動作し、独自サーバーやクライアントシークレットは不要です。</p><ol><li><a href="https://console.cloud.google.com/" target="_blank" rel="noopener noreferrer">Google Cloud Console</a>でプロジェクトを作成し、<strong>Google Drive API</strong>を有効にします。</li><li>Google Auth Platformで同意画面と対象ユーザーを設定します。テスト中なら、使うGoogleアカウントをテストユーザーに追加します。「データアクセス」に <code>https://www.googleapis.com/auth/drive</code> を登録します。</li><li>OAuthクライアントを<strong>ウェブアプリケーション</strong>として作成。「承認済みのJavaScript生成元」に <code id="origin"></code> を登録します。ローカル実行では <code>http://localhost</code> も登録してください。</li><li id="client-purpose">通常画面用の名前は「GMEMO」とし、「Use this client for an AI-powered agent」はチェックしません。AI用は別のクライアントを作成してください。</li><li>下の欄にクライアントIDを貼り付けます。シークレットは入力しません。</li></ol><div class="notice">既存の初期フォルダーの検索と、その中のファイルの編集にDriveの読み書き権限を使います。このツールの操作は初期フォルダー内に制限しますが、Googleが付与するOAuth権限自体がフォルダー単位に狭まるわけではありません。公開配布する場合はGoogleのOAuthアプリ審査要件を確認してください。<br><a href="https://developers.google.com/workspace/drive/api/guides/api-specific-auth" target="_blank" rel="noopener noreferrer">Google公式：Driveのアクセス権限</a></div><p id="file-warning" hidden><strong>ファイルの直接表示では認証できません。</strong><br>このフォルダで <code>python3 -m http.server 8000 --bind localhost</code> を実行し、<code>http://localhost:8000</code> を開いてください。</p><label for="initial-folder">初期フォルダー（未入力なら gmemo）</label><input id="initial-folder" placeholder="gmemo" maxlength="180" autocomplete="off"><p>マイドライブ直下にこのフォルダーを作成・再利用し、その中だけで閲覧・保存します。通常画面とAI用画面で同じ設定を使います。設定を変えても既存ファイルは移動しません。</p><label for="client-id">OAuthクライアントID</label><input id="client-id" placeholder="1234567890-xxxx.apps.googleusercontent.com" autocomplete="off"><div class="dialog-actions"><button id="close-settings">閉じる</button><button id="save-settings" class="primary">初期設定を保存</button></div></dialog>
+  <dialog id="folder-dialog"><h2>フォルダを作成</h2><p>現在開いているフォルダの中に作成します。例：AI / Photo / Music / メモ</p><form id="folder-form"><label for="folder-name">フォルダ名</label><input id="folder-name" required maxlength="180" autocomplete="off"><div class="dialog-actions"><button type="button" data-close="folder-dialog">キャンセル</button><button class="primary" type="submit">作成する</button></div></form></dialog>
+  <dialog id="url-dialog"><h2>フォルダURLから開く</h2><p>初期フォルダー内にあるフォルダーのURLまたはIDを指定してください。範囲外の場所は開けません。</p><form id="url-form"><label for="folder-url">Google DriveのフォルダURL または ID</label><input id="folder-url" required placeholder="https://drive.google.com/drive/folders/…" autocomplete="off"><div class="dialog-actions"><button type="button" data-close="url-dialog">キャンセル</button><button class="primary" type="submit">開く</button></div></form></dialog>
+<div hidden aria-hidden="true"><span id="my-drive" hidden></span><span id="open-folder" hidden></span><span id="breadcrumbs" hidden></span><span id="open-folder-mobile" hidden></span><span id="refresh" hidden></span><span id="new-folder" hidden></span><span id="files" hidden></span><span id="memo-editor" hidden></span><span id="copy-note" hidden></span><span id="download" hidden></span><span id="edit-tab" hidden></span><span id="preview-tab" hidden></span><span id="count" hidden></span><span id="preview" hidden></span><span id="dropzone" hidden></span><span id="note-link" hidden></span><span id="draft-status" hidden></span></div>
+  <script>
+    'use strict';
+    // This public client ID may also be embedded here for distribution. Never embed a client secret.
+    const DEFAULT_CLIENT_ID = '';
+    const DEFAULT_AI_CLIENT_ID = '';
+    const IS_AI = document.body.dataset.mode === 'ai';
+    const CLIENT_STORAGE_KEY = IS_AI ? 'gmemo.ai.clientId' : 'gmemo.clientId';
+    const SCOPE = 'https://www.googleapis.com/auth/drive';
+    const API = 'https://www.googleapis.com/drive/v3';
+    const UPLOAD = 'https://www.googleapis.com/upload/drive/v3/files';
+    const FOLDER = 'application/vnd.google-apps.folder';
+    const FILE_FIELDS = 'id,name,mimeType,modifiedTime,size,trashed,parents,driveId,capabilities(canEdit,canAddChildren,canDownload),shortcutDetails(targetId,targetMimeType),resourceKey';
+    const CHUNK = 8 * 1024 * 1024;
+    const $ = id => document.getElementById(id);
+    const state = { token:null, expires:0, connected:false, email:null, busy:false, authenticating:false, client:null, folder:null, trail:[], files:[], queue:[], note:null, dirty:false, noteUpload:null, generation:0, source:null, resourceKeys:{}, baseFolder:null, baseName:null };
+    function stored(key) { try { return localStorage.getItem(key); } catch { return null; } }
+    function store(key, value) { try { localStorage.setItem(key,value); return true; } catch { return false; } }
+    function status(message, error=false) { $('status').textContent=message; $('status').classList.toggle('error',error); if(IS_AI&&error) aiResult({ok:false,error:message}); }
+    function clientId() { return stored(CLIENT_STORAGE_KEY) || (IS_AI ? DEFAULT_AI_CLIENT_ID : DEFAULT_CLIENT_ID); }
+    function initialFolderName() { return (stored('gmemo.initialFolder')||'').trim() || 'gmemo'; }
+    function requireWorkspace() { if(!state.baseFolder || state.baseName!==initialFolderName())throw new Error('初期フォルダーの接続を確認するため、Googleに再接続してください。'); }
+    function hasContent() { return Boolean($('body').value.trim() || $('title').value.trim()); }
+    function driveLink(id, folder=false) { return `https://drive.google.com/${folder?'drive/folders/':'file/d/'}${encodeURIComponent(id)}${folder?'':'/view'}`; }
+    function aiLink(file) { const url=new URL('ai.html',location.href); const params=new URLSearchParams({[file.mimeType===FOLDER?'folder':'file']:file.id}); if(file.resourceKey)params.set('resourcekey',file.resourceKey); url.hash=params.toString(); return url.href; }
+    async function copyLink(file) { const url=aiLink(file); try { await navigator.clipboard.writeText(url); status('AI用URLをコピーしました。GMEMO.MDと一緒にAIに渡してください。'); } catch { prompt('GMEMO.MDと一緒にAIに渡すURLです。コピーしてください。',url); } }
+    function markdownName(name) { return (name.trim().replace(/[\x00-\x1f/\\]/g,'-').replace(/\.(md|markdown)$/i,'') || '無題のメモ')+'.md'; }
+    function isMarkdown(file) { return /\.(md|markdown)$/i.test(file.name) || /^text\/(?:x-)?markdown$/i.test(file.shortcutDetails?.targetMimeType||file.mimeType||''); }
+    function setEditorMode(preview) {
+      $('body').hidden=preview;$('preview').hidden=!preview;
+      $('edit-tab').classList.toggle('selected',!preview);$('preview-tab').classList.toggle('selected',preview);
+      $('edit-tab').setAttribute('aria-pressed',String(!preview));$('preview-tab').setAttribute('aria-pressed',String(preview));
+      if(preview)renderPreview();
+    }
+    function formatSize(size) { if(size<1024) return `${size} B`; if(size<1024**2) return `${(size/1024).toFixed(1)} KB`; if(size<1024**3) return `${(size/1024**2).toFixed(1)} MB`; return `${(size/1024**3).toFixed(1)} GB`; }
+    function writable() { return !!(state.connected && state.baseFolder && state.baseName===initialFolderName() && state.folder && state.folder.capabilities?.canAddChildren); }
+    function destination() { return state.note ? state.note.destination : state.folder?.name; }
+    function updateUI() {
+      document.querySelectorAll('[data-remote]').forEach(b=>b.disabled=!state.connected||state.busy||state.authenticating);
+      $('new-folder').disabled=!writable()||state.busy;
+      $('save').disabled=state.busy||!state.connected||(!hasContent()&&!state.queue.length)||(state.note && state.note.parentId!==state.folder?.id)||(state.note ? !state.note.capabilities?.canEdit || (state.queue.length>0&&!writable()) : !writable());
+      $('login').hidden=state.connected; $('logout').hidden=!state.connected; $('reconnect').hidden=!state.connected; $('reconnect').disabled=state.busy||state.authenticating;
+      $('login').disabled=state.busy||state.authenticating; $('logout').disabled=state.busy; $('settings').disabled=state.busy||state.authenticating;
+      ['new-note','title','body','choose-files','file-input'].forEach(id=>$(id).disabled=state.busy);
+      $('destination').textContent=destination() || (state.connected?'フォルダを開いてください':'接続後にフォルダを選択');
+      $('editor-label').textContent=state.note ? `${state.note.capabilities?.canEdit?'編集中':'読み取り専用'}：${state.note.name}` : '新しいメモ';
+      $('note-link').hidden=!state.note; if(state.note) $('note-link').href=driveLink(state.note.id);
+      $('copy-note').disabled=!state.note||state.busy;
+      $('count').textContent=`${Array.from($('body').value).length.toLocaleString()} 文字`;
+      $('save').textContent=state.busy?'処理中…':(!hasContent()&&state.queue.length?'ファイルを保存 ↑':state.note&&!IS_AI?'変更を保存 ↑':'Driveに保存 ↑');
+      document.querySelectorAll('.file-row button,.crumbs button,.drive-button,#queue button').forEach(b=>b.disabled=state.busy);
+      if(IS_AI) {
+        ['ai-get','ai-set-folder'].forEach(id=>$(id).disabled=!state.connected||state.busy||state.authenticating);
+        $('ai-download').disabled=!state.connected||state.busy||!state.source||state.source.capabilities?.canDownload===false;
+        $('ai-replace').disabled=!state.connected||state.busy||!state.source?.capabilities?.canEdit||state.queue.length!==1||state.source.mimeType.startsWith('application/vnd.google-apps.');
+      }
+    }
+    function draft() {
+      const ok=store(IS_AI?'gmemo.ai.draft':'gmemo.draft',JSON.stringify({title:$('title').value,body:$('body').value}));
+      $('draft-status').textContent=ok ? (state.dirty?'下書きをこのブラウザに保存済み · Driveには未保存':'Driveに保存済み · 端末にも下書きを保持') : '端末に下書きを保存できません。.mdでダウンロードしてください';
+    }
+    function changed() { state.dirty=true; draft(); updateUI(); if(!$('preview').hidden) renderPreview(); }
+    function requireToken() { if(!state.token || Date.now()>=state.expires) throw new Error('接続の有効期限が切れました。再接続してください。本文と添付はこの画面に残っています。'); }
+    async function checkedFetch(url, options={}) {
+      requireToken();
+      const keys=Object.entries(state.resourceKeys).map(([id,key])=>`${id}/${key}`).join(',');
+      const response=await fetch(url,{...options,headers:{...(keys?{'X-Goog-Drive-Resource-Keys':keys}:{}),...options.headers,Authorization:`Bearer ${state.token}`}});
+      if(!response.ok && response.status!==308) {
+        let detail=''; try { const data=await response.json(); detail=data.error?.message||''; } catch {}
+        if(response.status===401) { state.expires=0; throw new Error('Googleの接続が切れました。再接続してください。入力内容は残っています。'); }
+        throw new Error(`Drive API (${response.status}): ${detail || response.statusText}`);
+      }
+      return response;
+    }
+    async function api(path,params={},options={}) { const response=await checkedFetch(`${API}/${path}?${new URLSearchParams(params)}`,options); return response.status===204?{}:response.json(); }
+    async function allPages(path,params,key) {
+      const items=[]; let pageToken;
+      do { const page=await api(path,{...params,...(pageToken?{pageToken}:{})}); items.push(...(page[key]||[])); pageToken=page.nextPageToken; if(page.incompleteSearch) status('検索対象の一部を取得できませんでした。初期フォルダー内のフォルダーを個別に開いて更新してください。',true); } while(pageToken);
+      return items;
+    }
+    async function work(fn) { if(state.busy) return; state.busy=true; updateUI(); try { await fn(); } catch(error) { status(error.message||'処理に失敗しました。通信状態を確認してください。',true); } finally { state.busy=false; updateUI(); } }
+    function qEscape(value) { return value.replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
+    async function folderMeta(id,resourceKey) {
+      if(resourceKey)state.resourceKeys[id]=resourceKey;
+      const file=await api(`files/${encodeURIComponent(id)}`,{supportsAllDrives:true,fields:FILE_FIELDS});
+      if(file.resourceKey)state.resourceKeys[id]=file.resourceKey;
+      return file;
+    }
+    async function ensureWorkspace() {
+      const name=initialFolderName();
+      const folders=await allPages('files',{q:`trashed = false and 'root' in parents and mimeType = '${FOLDER}' and name = '${qEscape(name)}'`,fields:`nextPageToken,files(${FILE_FIELDS})`,pageSize:100,spaces:'drive'},'files');
+      if(folders.length>1)throw new Error(`マイドライブ直下に「${name}」が複数あります。Driveで名前を整理するか、初期設定で別の名前を指定してください。`);
+      const folder=folders[0] || await api('files',{fields:FILE_FIELDS},{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,mimeType:FOLDER,parents:['root']})});
+      state.baseFolder=folder;state.baseName=name;
+      $('my-drive').textContent='▤　'+name;$('my-drive').dataset.location=folder.id;
+      return folder;
+    }
+    async function workspacePath(file) {
+      requireWorkspace();
+      const path=[];const visited=new Set();let current=file;
+      for(let depth=0;depth<128;depth++) {
+        if(!current || current.trashed || visited.has(current.id))break;
+        visited.add(current.id);path.push(current);
+        if(current.id===state.baseFolder.id)return path.reverse();
+        const parent=current.parents?.[0];if(!parent || parent==='root')break;
+        current=parent===state.baseFolder.id?state.baseFolder:await folderMeta(parent);
+      }
+      throw new Error(`この対象は初期フォルダー「${state.baseName}」の外にあるため、取得・保存できません。必要なファイルはDriveで初期フォルダーの中へ移動してください。`);
+    }
+    async function scopedFile(id,resourceKey) {
+      requireWorkspace();const file=await folderMeta(id,resourceKey);const path=await workspacePath(file);return {file,path};
+    }
+    async function browse(folder,trail) {
+      const scoped=await scopedFile(folder.id,folder.resourceKey);folder=scoped.file;trail=scoped.path;
+      if(folder.mimeType!==FOLDER)throw new Error('フォルダーを指定してください。');
+      if(IS_AI) { state.folder=folder; state.trail=trail||[folder]; updateUI(); return; }
+      const params={q:`trashed = false and '${qEscape(folder.id)}' in parents`,fields:`nextPageToken,incompleteSearch,files(${FILE_FIELDS})`,pageSize:100,orderBy:'folder,name',supportsAllDrives:true,includeItemsFromAllDrives:true,corpora:folder.driveId?'drive':'user',...(folder.driveId?{driveId:folder.driveId}:{})};
+      const files=await allPages('files',params,'files');
+      state.folder=folder; state.trail=trail||[folder]; state.files=files;
+      renderLibrary(); updateUI();
+      if(state.note && state.note.parentId!==folder.id) status('編集中のメモの保存先は変わりません。別の場所へ保存する場合は「新規」で作成してください。');
+      else if(!folder.capabilities?.canAddChildren) status('この場所は読み取り専用です。保存する場合は書き込み可能なフォルダを選んでください。');
+    }
+    function renderLibrary() {
+      $('breadcrumbs').replaceChildren();
+      state.trail.forEach((folder,index)=>{ if(index) { const divider=document.createElement('span'); divider.textContent='›'; $('breadcrumbs').append(divider); } const b=document.createElement('button'); b.textContent=folder.name; b.onclick=()=>work(()=>browse(folder,state.trail.slice(0,index+1))); $('breadcrumbs').append(b); });
+      document.querySelectorAll('.nav button').forEach(b=>b.classList.toggle('active',b.dataset.location===state.trail[0]?.id));
+      $('files').replaceChildren();
+      if(!state.files.length) { const empty=document.createElement('div'); empty.className='empty'; empty.textContent='まだファイルがありません。メモやファイルを保存するか、フォルダを作成できます。'; $('files').append(empty); }
+      for(const file of state.files) {
+        const isFolder=file.mimeType===FOLDER || file.shortcutDetails?.targetMimeType===FOLDER;
+        const markdown=!isFolder&&isMarkdown(file);
+        if(file.resourceKey)state.resourceKeys[file.id]=file.resourceKey;
+        const row=document.createElement('div'); row.className='file-row';
+        const icon=document.createElement('span'); icon.className='file-icon'; icon.textContent=isFolder?'▤':markdown?'md':'↗';
+        const button=document.createElement('button'); button.className='file-main'; const name=document.createElement('strong'); name.textContent=file.name;
+        const meta=document.createElement('small'); meta.textContent=[isFolder?'フォルダ':file.size?formatSize(Number(file.size)):'ファイル',file.modifiedTime?new Date(file.modifiedTime).toLocaleDateString('ja-JP'):'',file.capabilities?.canEdit===false?'読み取り専用':''].filter(Boolean).join(' · ');
+        button.append(name,meta); button.setAttribute('aria-label',`${file.name}${isFolder?'を開く':markdown?'をメモ欄で開く':'の情報を表示'}`);button.onclick=()=>work(()=>openFile(file));
+        let action;
+        if(markdown) { action=document.createElement('button');action.className='small';action.textContent=file.capabilities?.canEdit===false?'表示':'編集';action.setAttribute('aria-label',`${file.name}をメモ欄で${file.capabilities?.canEdit===false?'表示':'編集'}`);action.onclick=()=>work(()=>openFile(file)); }
+        else { action=document.createElement('a'); action.href=driveLink(file.shortcutDetails?.targetId||file.id,isFolder); action.target='_blank'; action.rel='noopener noreferrer'; action.textContent='Drive ↗'; action.setAttribute('aria-label',`${file.name}をDriveで開く`); }
+        const copy=document.createElement('button'); copy.className='small'; copy.textContent='URL'; copy.setAttribute('aria-label',`${file.name}のAI用URLをコピー`); copy.onclick=()=>copyLink(file);
+        row.append(icon,button,copy,action); $('files').append(row);
+      }
+    }
+    function canReplace() { return !(state.dirty||state.queue.length||state.noteUpload?.session) || confirm('編集中のメモと未保存の添付を閉じますか？本文の下書きも置き換わります。必要なら先に保存・ダウンロードしてください。'); }
+    async function openFile(file) {
+      if(file.shortcutDetails?.targetId)file=(await scopedFile(file.shortcutDetails.targetId)).file;
+      if(file.mimeType===FOLDER || file.shortcutDetails?.targetMimeType===FOLDER) {
+        const folder=await folderMeta(file.shortcutDetails?.targetId||file.id,file.resourceKey); await browse(folder,[...state.trail,folder]); return;
+      }
+      if(!isMarkdown(file)) { status('このファイルは行右端の「Drive ↗」から開けます。Markdownファイルはこの画面で編集できます。'); return; }
+      if(!canReplace()) return;
+      const scoped=await scopedFile(file.id,file.resourceKey);file=scoped.file;
+      if(Number(file.size)>5*1024*1024) throw new Error('5MBを超えるMarkdownはDriveで開いてください。');
+      const response=await checkedFetch(`${API}/files/${encodeURIComponent(file.id)}?alt=media&supportsAllDrives=true`);
+      const text=await response.text(); if(new Blob([text]).size>5*1024*1024) throw new Error('このMarkdownは大きすぎるためエディタで開けません。');
+      // Use the scoped parent as the destination of the existing Markdown file.
+      const parent=scoped.path.at(-2);
+      if(!parent) throw new Error('親フォルダを取得できませんでした。フォルダURLから保存先を開いてください。');
+      await browse(parent,state.folder?state.trail:[parent]);
+      state.note={...file,destination:parent.name,parentId:parent.id}; state.queue=[]; state.noteUpload=null; state.dirty=false;
+      $('title').value=file.name.replace(/\.(md|markdown)$/i,''); $('body').value=text; draft(); renderQueue(); setEditorMode(false);renderLibrary(); updateUI();
+      $('memo-editor').scrollIntoView({behavior:'smooth',block:'start'});
+      status(file.capabilities?.canEdit?'メモ欄に読み込みました。「変更を保存」で同じファイルを更新できます。':'メモ欄に読み込みました。このファイルは読み取り専用です。');
+    }
+    function newNote() { if(!canReplace()) return; state.note=null; state.noteUpload=null; state.queue=[]; state.dirty=false; $('title').value=''; $('body').value=''; draft(); $('draft-status').textContent='下書きはこのブラウザに保存します'; renderQueue();setEditorMode(false);updateUI(); $('title').focus(); }
+    function addFiles(files) {
+      if(state.busy) return;
+      for(const file of files) state.queue.push({file,session:null,offset:0});
+      renderQueue(); updateUI(); status('添付を追加しました。「Driveに保存」でアップロードします。添付の実体は再読み込みすると失われます。');
+    }
+    function renderQueue() {
+      $('queue').replaceChildren();
+      state.queue.forEach((entry,index)=>{ const row=document.createElement('div'); row.className='upload-item'; const label=document.createElement('span'); label.textContent=entry.file.name; const size=document.createElement('small'); size.textContent=formatSize(entry.file.size); const remove=document.createElement('button'); remove.textContent='×'; remove.setAttribute('aria-label',`${entry.file.name}の添付を取り消す`); remove.disabled=state.busy; remove.onclick=()=>{state.queue.splice(index,1);renderQueue();updateUI();}; row.append(label,size,remove); $('queue').append(row); });
+    }
+    // Keep each resumable session until the server confirms success, including after a lost response.
+    async function upload(entry,metadata,id) {
+      requireWorkspace();
+      if(id) { const {file}=await scopedFile(id);if(file.capabilities?.canEdit===false)throw new Error('このファイルは読み取り専用です。'); }
+      else { if(!metadata.parents?.length)throw new Error('保存先を指定してください。');for(const parent of metadata.parents){const {file}=await scopedFile(parent);if(file.mimeType!==FOLDER||!file.capabilities?.canAddChildren)throw new Error('このフォルダーには保存できません。');} }
+      if(entry.session && entry.targetId!==(id||'')) throw new Error('別の保存先に向けてアップロードを開始しています。元の操作で再開するか、添付を外して追加し直してください。');
+      if(!entry.session) {
+        const response=await checkedFetch(`${UPLOAD}${id?'/'+encodeURIComponent(id):''}?uploadType=resumable&supportsAllDrives=true&fields=id,name`,{method:id?'PATCH':'POST',headers:{'Content-Type':'application/json; charset=UTF-8','X-Upload-Content-Type':entry.file.type||'application/octet-stream','X-Upload-Content-Length':String(entry.file.size)},body:JSON.stringify(metadata)});
+        const location=response.headers.get('Location'); if(!location) throw new Error('アップロード先を取得できませんでした。');
+        const url=new URL(location); if(url.protocol!=='https:' || url.hostname!=='www.googleapis.com') throw new Error('予期しないアップロード先です。');
+        entry.session=location; entry.targetId=id||'';
+      } else {
+        const check=await checkedFetch(entry.session,{method:'PUT',headers:{'Content-Range':`bytes */${entry.file.size}`},body:new Blob([])});
+        if(check.status!==308) return check.json();
+        entry.offset=rangeOffset(check);
+      }
+      do {
+        const end=Math.min(entry.offset+CHUNK,entry.file.size);
+        const response=await checkedFetch(entry.session,{method:'PUT',headers:{'Content-Type':entry.file.type||'application/octet-stream','Content-Range':entry.file.size?`bytes ${entry.offset}-${end-1}/${entry.file.size}`:'bytes */0'},body:entry.file.slice(entry.offset,end)});
+        if(response.status!==308) return response.json();
+        const next=rangeOffset(response); if(next<=entry.offset) throw new Error('アップロードが進みませんでした。もう一度保存すると続きから再開します。'); entry.offset=next;
+        status(`${entry.file.name} をアップロード中… ${Math.floor(100*entry.offset/entry.file.size)}%`);
+      } while(entry.offset<entry.file.size);
+      throw new Error('アップロード完了を確認できませんでした。もう一度保存して状態を確認してください。');
+    }
+    function rangeOffset(response) { const match=(response.headers.get('Range')||'').match(/^bytes=0-(\d+)$/); return match?Number(match[1])+1:0; }
+    function markdownLabel(name) { return name.replace(/[\\[\]]/g,'\\$&').replace(/[\r\n]/g,' '); }
+    async function save() {
+      requireToken();
+      if(!state.folder || !hasContent()&&!state.queue.length) return;
+      if(state.note && state.note.parentId!==state.folder.id) throw new Error('編集中のメモの保存先フォルダを開いてから保存してください。「新規」で新しい場所にメモを作れます。');
+      const {file:folder}=await scopedFile(state.folder.id); let uploaded=0; const attachments=[];
+      while(state.queue.length) {
+        const entry=state.queue[0];
+        if(entry.parentId && entry.parentId!==folder.id) throw new Error('この添付のアップロードを始めた保存先に戻ってください。');
+        entry.parentId=folder.id;
+        status(`${entry.file.name} をアップロードしています…`);
+        const file=await upload(entry,{name:entry.file.name,parents:[folder.id],...(entry.file.type?{mimeType:entry.file.type}:{})});
+        attachments.push({id:file.id,name:file.name,url:driveLink(file.id)});
+        // Only add links when a memo is present. File-only uploads create no empty Markdown.
+        if(hasContent()) { $('body').value+=`${$('body').value?'\n\n':''}[${markdownLabel(file.name)}](${driveLink(file.id)})`; changed(); }
+        state.queue.shift(); uploaded++; renderQueue();
+      }
+      if(hasContent()) {
+        const name=markdownName($('title').value); const text=$('body').value;
+        // Resolve an uncertain prior upload before updating edited text, so retries don't create copies.
+        let latest=false;
+        while(!latest) {
+          if(!state.noteUpload) state.noteUpload={file:new Blob([text],{type:'text/markdown'}),name,text,session:null,offset:0,parentId:folder.id};
+          const entry=state.noteUpload;
+          if(entry.parentId!==folder.id) throw new Error('保存を開始したフォルダに戻ってから再実行してください。');
+          const file=await upload(entry,{name:entry.name,mimeType:'text/markdown',...(!state.note?{parents:[folder.id]}:{})},state.note?.id);
+          latest=entry.name===name && entry.text===text;
+          state.note={id:file.id,name:file.name,parentId:folder.id,destination:folder.name,capabilities:{canEdit:true}}; state.noteUpload=null;
+        }
+        state.dirty=false; draft();
+      }
+      status(uploaded?`${uploaded}件のファイル${hasContent()?'とMarkdownを':'を'}保存しました。`:'Markdownを保存しました。');
+      try { await browse(folder,state.trail); } catch(error) { status(`保存は完了しました。一覧の更新に失敗しました：${error.message}`,true); }
+      return {ok:true,operation:'save',...(state.note?{file:{id:state.note.id,name:state.note.name,url:driveLink(state.note.id)}}:{}),...(attachments.length?{attachments}:{})};
+    }
+    function inline(text) {
+      const fragment=document.createDocumentFragment();
+      const pattern=/(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\(https?:\/\/[^\s)]+\))/g; let last=0;
+      for(const match of text.matchAll(pattern)) {
+        fragment.append(document.createTextNode(text.slice(last,match.index))); let node;
+        if(match[0][0]==='`') { node=document.createElement('code'); node.textContent=match[0].slice(1,-1); }
+        else if(match[0].startsWith('**')) { node=document.createElement('strong'); node.textContent=match[0].slice(2,-2); }
+        else { const parts=match[0].match(/^\[([^\]]+)\]\((.+)\)$/); node=document.createElement('a'); node.textContent=parts[1]; node.href=parts[2]; node.target='_blank'; node.rel='noopener noreferrer'; }
+        fragment.append(node); last=match.index+match[0].length;
+      }
+      fragment.append(document.createTextNode(text.slice(last))); return fragment;
+    }
+    function renderPreview() {
+      const root=$('preview'); root.replaceChildren(); let code=null,list=null;
+      for(const line of $('body').value.split('\n')) {
+        if(/^```/.test(line)) { list=null; if(code) code=null; else { const pre=document.createElement('pre'); code=document.createElement('code'); pre.append(code); root.append(pre); } continue; }
+        if(code) { code.append(document.createTextNode(line+'\n')); continue; }
+        const bullet=line.match(/^\s*([-*]|\d+\.)\s+(.*)$/);
+        if(bullet) { const kind=/\d/.test(bullet[1])?'ol':'ul'; if(!list||list.localName!==kind) { list=document.createElement(kind); root.append(list); } const li=document.createElement('li'); li.append(inline(bullet[2])); list.append(li); continue; }
+        list=null; const heading=line.match(/^(#{1,6})\s+(.*)$/); const quote=line.match(/^>\s?(.*)$/);
+        const node=document.createElement(heading?'h'+heading[1].length:quote?'blockquote':'p'); node.append(inline(heading?heading[2]:quote?quote[1]:line)); root.append(node);
+      }
+    }
+    function parseReference(input) {
+      const value=input.trim();
+      if(/^[\w-]+$/.test(value)) return {id:value};
+      let url; try { url=new URL(value); } catch { throw new Error('Google DriveのURL、AI用URL、またはファイルIDを入力してください。'); }
+      if(url.origin===location.origin && /\/ai\.html$/.test(url.pathname)) {
+        const params=new URLSearchParams(url.hash.slice(1)); const id=params.get('file')||params.get('folder');
+        if(id&&/^[\w-]+$/.test(id))return {id,resourceKey:params.get('resourcekey')||undefined};
+      }
+      if(url.hostname==='drive.google.com' || url.hostname==='docs.google.com') {
+        const id=url.pathname.match(/\/(?:d|folders)\/([\w-]+)/)?.[1]||url.searchParams.get('id');
+        if(id&&/^[\w-]+$/.test(id))return {id,resourceKey:url.searchParams.get('resourcekey')||undefined};
+      }
+      throw new Error('対応するGoogle DriveのURLまたはIDではありません。');
+    }
+    function aiResult(result) { if(IS_AI) $('ai-result').value=JSON.stringify(result); }
+    function fileInfo(file) { return {id:file.id,name:file.name,mimeType:file.mimeType,url:driveLink(file.id,file.mimeType===FOLDER),aiUrl:aiLink(file),...(file.size?{size:Number(file.size)}:{})}; }
+    async function aiGet() {
+      if(!canReplace())return;
+      const ref=parseReference($('ai-key').value);
+      const {file,path}=await scopedFile(ref.id,ref.resourceKey);
+      if(file.mimeType===FOLDER) {
+        await browse(file,[file]); aiResult({ok:true,operation:'get',file:fileInfo(file),writable:!!file.capabilities?.canAddChildren}); status('フォルダを保存先に設定しました。中の一覧は取得していません。'); return;
+      }
+      const markdown=isMarkdown(file);
+      let text='';
+      if(markdown) {
+        if(Number(file.size)>5*1024*1024)throw new Error('5MBを超えるMarkdownはダウンロードして作業してください。');
+        text=await (await checkedFetch(`${API}/files/${encodeURIComponent(file.id)}?alt=media&supportsAllDrives=true`)).text();
+        if(new Blob([text]).size>5*1024*1024)throw new Error('このMarkdownは大きすぎます。ダウンロードして作業してください。');
+      }
+      // Parent metadata is read only to find the existing item's destination, never to list siblings.
+      const parent=path.at(-2);
+      state.source=file;state.note=markdown?{...file,parentId:parent?.id,destination:parent?.name||'親フォルダ不明'}:null;state.folder=parent;state.trail=parent?[parent]:[];state.queue=[];state.noteUpload=null;state.dirty=false;
+      $('title').value=markdown?file.name.replace(/\.(md|markdown)$/i,''):'';$('body').value=text;draft();renderQueue();updateUI();
+      if(parent)$('ai-folder').value=parent.id;
+      aiResult({ok:true,operation:'get',file:fileInfo(file),editable:!!file.capabilities?.canEdit,content:markdown?'Markdown本文欄':'ファイルをダウンロードで取得'});
+      status(markdown?'取得しました。本文はMarkdown本文欄にあります。':'ファイル情報を取得しました。「ファイルをダウンロード」で手元に取得できます。');
+    }
+    async function aiDownload() {
+      if(!state.source)throw new Error('先にKEYを指定して取得してください。');
+      const {file}=await scopedFile(state.source.id);
+      if(file.mimeType.startsWith('application/vnd.google-apps.'))throw new Error('Googleドキュメント等の専用形式は、結果のDrive URLから開いてエクスポートしてください。');
+      const response=await checkedFetch(`${API}/files/${encodeURIComponent(file.id)}?alt=media&supportsAllDrives=true`);
+      const blob=await response.blob(); const url=URL.createObjectURL(blob); const a=document.createElement('a');a.href=url;a.download=file.name;a.click();setTimeout(()=>URL.revokeObjectURL(url),60000);
+      aiResult({ok:true,operation:'download',id:file.id,name:file.name,status:'ブラウザのダウンロードを開始'}); status('ダウンロードを開始しました。完了と保存場所はブラウザで確認してください。');
+    }
+    async function aiReplace() {
+      const file=state.source; const entry=state.queue[0];
+      if(!file?.capabilities?.canEdit||state.queue.length!==1||file.mimeType.startsWith('application/vnd.google-apps.'))throw new Error('更新できるファイルを取得して、更新するファイルを1件だけ添付してください。');
+      const result=await upload(entry,{name:file.name,mimeType:entry.file.type||file.mimeType},file.id);
+      state.queue.shift();state.source={...file,name:result.name};state.note=null;state.noteUpload=null;state.dirty=false;$('title').value='';$('body').value='';draft();renderQueue();
+      aiResult({ok:true,operation:'replace',file:fileInfo(state.source)});status('元ファイルを更新しました。ファイルIDとURLは変わりません。');
+    }
+    function initAI() {
+      const params=new URLSearchParams(location.hash.slice(1)); const id=params.get('file')||params.get('folder');
+      if(id) { const ref=driveLink(id,params.has('folder')); const url=new URL(ref); if(params.has('resourcekey'))url.searchParams.set('resourcekey',params.get('resourcekey'));$('ai-key').value=url.href; }
+      $('ai-get').onclick=()=>work(aiGet);
+      $('ai-set-folder').onclick=()=>work(async()=>{const input=$('ai-folder').value.trim();requireWorkspace();const ref=input?parseReference(input):{id:state.baseFolder.id};const {file:folder}=await scopedFile(ref.id,ref.resourceKey);if(folder.mimeType!==FOLDER)throw new Error('保存先はフォルダのURLまたはIDで指定してください。');await browse(folder,[folder]);aiResult({ok:true,operation:'set-folder',file:fileInfo(folder),writable:!!folder.capabilities?.canAddChildren});status('保存先を設定しました。既存メモの保存先を変更する場合は「新規」で作成してください。');});
+      $('ai-download').onclick=()=>work(aiDownload);$('ai-replace').onclick=()=>work(aiReplace);
+      aiResult({ok:true,operation:'ready',connected:false});
+    }
+    async function connect() {
+      if(!clientId()) { $('setup').showModal(); return; }
+      if(location.protocol==='file:') { $('setup').showModal(); return; }
+      if(!window.google?.accounts?.oauth2) { status('Google認証ライブラリを読み込めません。ネット接続や広告ブロッカーを確認し、ページを再読み込みしてください。',true); return; }
+      state.authenticating=true; updateUI();
+      const generation=++state.generation;
+      const authError=error=>{ if(generation!==state.generation) return; state.authenticating=false; updateUI(); status(`Googleへの接続を完了できませんでした：${error.error_description||error.type||error.error||'キャンセルされました'}`,true); };
+      try {
+        state.client=google.accounts.oauth2.initTokenClient({client_id:clientId(),scope:SCOPE,hint:state.email||undefined,include_granted_scopes:false,callback:response=>{
+          if(generation!==state.generation) return;
+          if(response.error) { authError(response); return; }
+          if(!google.accounts.oauth2.hasGrantedAllScopes(response,SCOPE)) { authError({error:'Driveのアクセス権が許可されませんでした'}); return; }
+          state.token=response.access_token; state.expires=Date.now()+Number(response.expires_in)*1000-30000; state.authenticating=false;
+          work(async()=>{
+            const user=await api('about',{fields:'user(displayName,emailAddress)'});
+            if(state.email && state.email!==user.user.emailAddress) { state.token=null; state.expires=0; throw new Error('別のアカウントが選ばれました。同じアカウントで再接続するか、接続解除して切り替えてください。'); }
+            state.email=user.user.emailAddress; state.connected=true;
+            $('identity').replaceChildren(); const dot=document.createElement('i'); dot.className='dot on'; $('identity').append(dot,document.createTextNode(user.user.emailAddress||user.user.displayName));
+            const previousBaseId=state.baseFolder?.id;
+            const base=await ensureWorkspace();
+            const folder=previousBaseId===base.id && state.folder ? state.folder : base;
+            await browse(folder,[base]);
+            if(IS_AI) { $('ai-folder').value=folder.id;aiResult({ok:true,operation:'connect',folder:fileInfo(base)}); }
+            status(`Google Driveに接続しました。「${state.baseName}」の中で閲覧・保存できます。`);
+          });
+        },error_callback:authError});
+        state.client.requestAccessToken({prompt:state.connected?'':'select_account'});
+      } catch(error) { authError(error); }
+    }
+    function disconnect(revoke=true) {
+      const token=state.token; state.generation++; state.token=null; state.expires=0; state.connected=false; state.email=null; state.authenticating=false; state.folder=null; state.trail=[]; state.files=[]; state.note=null; state.noteUpload=null; state.source=null; state.resourceKeys={}; state.baseFolder=null;state.baseName=null; state.queue.forEach(entry=>{entry.session=null;entry.offset=0;delete entry.parentId;});
+      $('identity').textContent='未接続'; $('breadcrumbs').textContent='Google Drive'; $('files').replaceChildren();
+      if(revoke && token && window.google?.accounts?.oauth2) google.accounts.oauth2.revoke(token,()=>{});
+      state.dirty=hasContent(); draft(); updateUI(); status('接続を解除しました。本文は下書きとして残ります。次の接続後は新しいメモとして保存します。');
+    }
+    $('login').onclick=connect; $('reconnect').onclick=connect; $('logout').onclick=()=>{ if(state.queue.some(e=>e.session)||state.noteUpload?.session) { if(!confirm('アップロード途中のファイルがあります。接続解除すると再開情報を失い、次回保存時に重複する可能性があります。解除しますか？')) return; } disconnect(); };
+    $('settings').onclick=()=>{ $('client-id').value=clientId();$('initial-folder').value=initialFolderName(); $('setup').showModal(); };
+    $('close-settings').onclick=()=>$('setup').close();
+    $('save-settings').onclick=()=>{ const value=$('client-id').value.trim(); if(!/^[\w-]+\.apps\.googleusercontent\.com$/.test(value)) { $('client-id').setCustomValidity('有効なGoogle OAuthクライアントIDを入力してください。'); $('client-id').reportValidity(); return; } const name=$('initial-folder').value.trim()||'gmemo';if(/[\x00-\x1f/\\]/.test(name)){status('初期フォルダーはパスではなく、フォルダー名だけを入力してください。',true);return;}if((value!==clientId()||name!==initialFolderName())&&state.connected)disconnect();if(!store('gmemo.initialFolder',name)){status('初期フォルダー設定を保存できません。',true);return;} if(!store(CLIENT_STORAGE_KEY,value)) { status('初期設定を保存できません。ブラウザのサイトデータ設定を確認してください。',true); return; } $('setup').close(); status('初期設定を保存しました。「Googleに接続」でログインしてください。'); };
+    $('client-id').oninput=()=>$('client-id').setCustomValidity('');
+    $('my-drive').onclick=()=>work(()=>{requireWorkspace();return browse(state.baseFolder,[state.baseFolder]);});
+    $('refresh').onclick=()=>work(()=>{requireWorkspace();return browse(state.folder||state.baseFolder,state.trail);});
+    $('new-folder').onclick=()=>{ $('folder-name').value=''; $('folder-dialog').showModal(); $('folder-name').focus(); };
+    $('folder-form').onsubmit=event=>{event.preventDefault();const name=$('folder-name').value.trim();if(!name)return; $('folder-dialog').close();work(async()=>{if(!writable())throw new Error('この場所にはフォルダを作成できません。');await scopedFile(state.folder.id);await api('files',{supportsAllDrives:true,fields:'id'},{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,mimeType:FOLDER,parents:[state.folder.id]})});await browse(state.folder,state.trail);status(`「${name}」を作成しました。`);});};
+    for(const id of ['open-folder','open-folder-mobile']) $(id).onclick=()=>{ $('folder-url').value=''; $('url-dialog').showModal(); };
+    $('url-form').onsubmit=event=>{event.preventDefault();const input=$('folder-url').value.trim();work(async()=>{let id=input,key; if(/^https?:/.test(input)){const url=new URL(input);if(url.hostname!=='drive.google.com')throw new Error('drive.google.comのフォルダURLを入力してください。'); id=url.pathname.match(/\/folders\/([\w-]+)/)?.[1]||url.searchParams.get('id');key=url.searchParams.get('resourcekey');}if(!id||! /^[\w-]+$/.test(id))throw new Error('フォルダURLまたはIDを確認してください。');const folder=await folderMeta(id,key);if(folder.mimeType!==FOLDER)throw new Error('フォルダのURLを入力してください。');$('url-dialog').close();await browse(folder,[folder]);status('フォルダを開きました。');});};
+    document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>$(b.dataset.close).close());
+    $('title').oninput=changed; $('body').oninput=changed; $('new-note').onclick=()=>{newNote();if(IS_AI){state.source=null;updateUI();}}; $('save').onclick=()=>work(async()=>{const result=await save();if(IS_AI&&result)aiResult(result);}); $('copy-note').onclick=()=>state.note&&copyLink(state.note);
+    $('choose-files').onclick=()=>$('file-input').click(); $('file-input').onchange=()=>{addFiles($('file-input').files);$('file-input').value='';};
+    $('dropzone').ondragover=event=>{event.preventDefault();if(!state.busy)$('dropzone').classList.add('dragging');};
+    $('dropzone').ondragleave=()=>$('dropzone').classList.remove('dragging'); $('dropzone').ondrop=event=>{event.preventDefault();$('dropzone').classList.remove('dragging');addFiles(event.dataTransfer.files);};
+    for(const id of ['edit-tab','preview-tab']) $(id).onclick=()=>setEditorMode(id==='preview-tab');
+    $('download').onclick=()=>{const url=URL.createObjectURL(new Blob([$('body').value],{type:'text/markdown;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download=markdownName($('title').value);a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
+    window.addEventListener('beforeunload',event=>{if(state.busy||state.queue.length||state.dirty){event.preventDefault();event.returnValue='';}});
+    window.addEventListener('keydown',event=>{if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='s'){event.preventDefault();if(!$('save').disabled)$('save').click();}});
+    try { const saved=JSON.parse(stored(IS_AI?'gmemo.ai.draft':'gmemo.draft')||'null'); if(saved&&typeof saved.title==='string'&&typeof saved.body==='string'){$('title').value=saved.title;$('body').value=saved.body;state.dirty=hasContent();if(state.dirty)$('draft-status').textContent='前回の下書きを復元しました · 保存時は新しいメモになります';} } catch {}
+    $('origin').textContent=location.protocol==='file:'?'http://localhost:8000':location.origin; $('file-warning').hidden=location.protocol!=='file:'; $('client-id').value=clientId();$('initial-folder').value=initialFolderName();$('my-drive').textContent='▤　'+initialFolderName(); if(IS_AI){$('client-purpose').textContent='AI用に別のクライアント「GMEMO AI」を作り、「Use this client for an AI-powered agent」をチェックしてください。AI用のクライアントIDだけをこの画面に設定します。';initAI();} updateUI();
+  </script>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+</body>
+</html>
